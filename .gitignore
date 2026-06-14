@@ -1,0 +1,22 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+
+# Database
+*.db
+*.sqlite3
+
+# Large binaries - Render installs ffmpeg automatically on Linux
+ffmpeg.exe
+ffprobe.exe
+ffmpeg
+ffprobe
+*.exe
+
+# Temp audio files
+temp_audio_chunk.wav
+test_audio.mp3
