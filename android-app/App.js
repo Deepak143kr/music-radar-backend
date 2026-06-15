@@ -145,7 +145,6 @@ export default function App() {
       const res = await fetch(`${BACKEND_URL}/recognize`, {
         method: 'POST',
         body: formData,
-        headers: { 'Content-Type': 'multipart/form-data' },
       });
       const data = await res.json();
 
