@@ -129,9 +129,12 @@ export default function App() {
   };
 
   const sendToBackend = async (uri) => {
-    setStatus('Identifying song...');
     setLoading(true);
     try {
+      const info = await FileSystem.getInfoAsync(uri);
+      const sizeKB = info.exists ? (info.size / 1024).toFixed(1) : '0';
+      setStatus(`Identifying... (${sizeKB} KB)`);
+
       const formData = new FormData();
       const filename = uri.split('/').pop() || 'recording.m4a';
       const match = /\.(\w+)$/.exec(filename);
@@ -150,15 +153,19 @@ export default function App() {
       });
       const data = await res.json();
 
-      if (data.status === 'success' && data.song) {
-        setCurrentSong(data.song);
-        setStatus(`Found: ${data.song.song_name}`);
-        if (data.saved_new) fetchHistory();
+      if (data.status === 'success') {
+        if (data.song) {
+          setCurrentSong(data.song);
+          setStatus(`Found: ${data.song.song_name} (${sizeKB} KB)`);
+          if (data.saved_new) fetchHistory();
+        } else {
+          setStatus(`No song detected (${sizeKB} KB), listening...`);
+        }
       } else {
-        setStatus('No song detected, still listening...');
+        setStatus(`Backend Error: ${data.message || 'Unknown error'}`);
       }
     } catch (e) {
-      setStatus('Could not reach backend. Check IP in app.');
+      setStatus(`Error: ${e.message || 'Network request failed'}`);
     } finally {
       setLoading(false);
     }
