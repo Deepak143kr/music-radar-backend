@@ -131,16 +131,14 @@ export default function App() {
       const sizeKB = info.exists ? (info.size / 1024).toFixed(1) : '0';
       setStatus(`Identifying... (${sizeKB} KB)`);
 
+      // Fetch the file locally as a Blob to bypass native React Native FormData bugs
+      const fileResponse = await fetch(uri);
+      const audioBlob = await fileResponse.blob();
+
       const formData = new FormData();
       const filename = uri.split('/').pop() || 'recording.m4a';
-      const match = /\.(\w+)$/.exec(filename);
-      const ext = match ? match[1] : 'm4a';
       
-      formData.append('audio', {
-        uri,
-        name: filename,
-        type: `audio/${ext === 'm4a' ? 'm4a' : ext}`,
-      });
+      formData.append('audio', audioBlob, filename);
 
       const res = await fetch(`${BACKEND_URL}/recognize`, {
         method: 'POST',
