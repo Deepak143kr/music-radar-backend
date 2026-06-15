@@ -1,0 +1,21 @@
+services:
+  # Python FastAPI Backend
+  - type: web
+    name: music-radar-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: ./build.sh
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+
+  # React Static Frontend
+  - type: static
+    name: music-radar-frontend
+    rootDir: frontend
+    buildCommand: npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        sync: false

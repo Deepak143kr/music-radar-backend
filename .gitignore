@@ -1,22 +1,32 @@
-# Python
-venv/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.env
+# Dependency directories
+node_modules/
+backend/venv/
 
-# Database
-*.db
-*.sqlite3
+# Production builds
+frontend/dist/
+android-app/dist/
+android-app/web-build/
 
-# Large binaries - Render installs ffmpeg automatically on Linux
-ffmpeg.exe
-ffprobe.exe
-ffmpeg
-ffprobe
-*.exe
+# Local env / secret files
+.env*.local
 
-# Temp audio files
-temp_audio_chunk.wav
-test_audio.mp3
+# System/IDE files
+.DS_Store
+.vscode/
+.idea/
+
+# Local databases and compiled cache
+backend/__pycache__/
+backend/*.pyc
+backend/*.db
+backend/*.sqlite3
+
+# Large local binaries
+backend/ffmpeg.exe
+backend/ffprobe.exe
+backend/ffmpeg
+backend/ffprobe
+
+# Temporary/debug logs
+*.log
+backend/temp_audio_chunk.wav
