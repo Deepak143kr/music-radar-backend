@@ -11,7 +11,7 @@
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundColor": "#0f172a"
       },
-      "package": "com.deepak143kr.musicradar",
+      "package": "com.musicradar.app",
       "versionCode": 1,
       "permissions": [
         "android.permission.RECORD_AUDIO",
@@ -22,7 +22,7 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.deepak143kr.musicradar",
+      "bundleIdentifier": "com.musicradar.app",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Music Radar needs your microphone to identify nearby music."
       }
