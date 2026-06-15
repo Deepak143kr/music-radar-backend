@@ -133,7 +133,15 @@ export default function App() {
     setLoading(true);
     try {
       const formData = new FormData();
-      formData.append('audio', { uri, name: 'sample.wav', type: 'audio/wav' });
+      const filename = uri.split('/').pop() || 'recording.m4a';
+      const match = /\.(\w+)$/.exec(filename);
+      const ext = match ? match[1] : 'm4a';
+      
+      formData.append('audio', {
+        uri,
+        name: filename,
+        type: `audio/${ext === 'm4a' ? 'm4a' : ext}`,
+      });
 
       const res = await fetch(`${BACKEND_URL}/recognize`, {
         method: 'POST',

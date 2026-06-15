@@ -43,8 +43,15 @@ async def recognize_audio(audio: UploadFile = File(...), db: Session = Depends(g
     if len(content) == 0:
         raise HTTPException(status_code=400, detail="Empty audio file")
 
+    # Determine extension from filename
+    ext = ".wav"
+    if audio.filename:
+        _, file_ext = os.path.splitext(audio.filename)
+        if file_ext:
+            ext = file_ext
+
     # Save audio to a temp file — shazamio works best with a real file path
-    tmp_path = "temp_audio_chunk.wav"
+    tmp_path = f"temp_audio_chunk{ext}"
     with open(tmp_path, "wb") as f:
         f.write(content)
 
