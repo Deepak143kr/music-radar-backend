@@ -4,7 +4,7 @@ import {
   Animated, Linking, StatusBar, SafeAreaView, ActivityIndicator,
 } from 'react-native';
 import { AudioModule, RecordingPresets, useAudioRecorder, setAudioModeAsync } from 'expo-audio';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 // Change this to your laptop's IP if backend is running locally,
