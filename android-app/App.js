@@ -3,7 +3,7 @@ import {
   StyleSheet, View, Text, TouchableOpacity, ScrollView,
   Animated, Linking, StatusBar, SafeAreaView, ActivityIndicator,
 } from 'react-native';
-import { AudioModule, RecordingPresets, AudioRecorder, setAudioModeAsync } from 'expo-audio';
+import { AudioModule, RecordingPresets, useAudioRecorder, setAudioModeAsync } from 'expo-audio';
 import * as FileSystem from 'expo-file-system';
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
@@ -33,7 +33,7 @@ export default function App() {
   const [status, setStatus] = useState('Tap to start detecting music');
   const [loading, setLoading] = useState(false);
 
-  const recordingRef = useRef(null);
+  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const intervalRef = useRef(null);
   const spinAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -99,32 +99,28 @@ export default function App() {
   };
 
   const captureAndSend = async () => {
-    if (recordingRef.current) return; // skip if already recording
+    if (audioRecorder.isRecording) return; // skip if already recording
     try {
-      const rec = new AudioRecorder(RecordingPresets.HIGH_QUALITY);
-      await rec.prepareToRecordAsync();
-      recordingRef.current = rec;
-      rec.record();
+      await audioRecorder.prepareToRecordAsync();
+      audioRecorder.record();
 
       setTimeout(async () => {
         try {
-          await rec.stop();
-          const uri = rec.uri;
-          recordingRef.current = null;
+          if (!audioRecorder.isRecording) return;
+          await audioRecorder.stop();
+          const uri = audioRecorder.uri;
           if (uri) {
             await sendToBackend(uri);
             try {
               await FileSystem.deleteAsync(uri, { idempotent: true });
             } catch (_) {}
           }
-          rec.release();
-        } catch (_) {
-          recordingRef.current = null;
-          try { rec.release(); } catch (_) {}
+        } catch (e) {
+          console.error("Error stopping recording:", e);
         }
       }, 9000); // 9s recording per 10s cycle
     } catch (e) {
-      recordingRef.current = null;
+      console.error("Error starting recording:", e);
     }
   };
 
@@ -175,12 +171,10 @@ export default function App() {
     setIsListening(false);
     setStatus('Stopped. Tap to detect again.');
     clearInterval(intervalRef.current);
-    if (recordingRef.current) {
+    if (audioRecorder.isRecording) {
       try {
-        await recordingRef.current.stop();
-        recordingRef.current.release();
+        await audioRecorder.stop();
       } catch (_) {}
-      recordingRef.current = null;
     }
   };
 
