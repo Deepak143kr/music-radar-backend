@@ -1,16 +1,37 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   StyleSheet, View, Text, TouchableOpacity, ScrollView,
   Animated, Linking, StatusBar, SafeAreaView, ActivityIndicator,
+  Platform,
 } from 'react-native';
-import { AudioModule, RecordingPresets, useAudioRecorder, setAudioModeAsync } from 'expo-audio';
+import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
-// Change this to your laptop's IP if backend is running locally,
-// or your Render.com URL if deployed online.
 const BACKEND_URL = 'https://music-radar-backend.onrender.com';
 // ───────────────────────────────────────────────────────────────────────────
+
+const RECORDING_OPTIONS = {
+  android: {
+    extension: '.m4a',
+    outputFormat: Audio.RECORDING_OPTION_ANDROID_OUTPUT_FORMAT_MPEG_4,
+    audioEncoder: Audio.RECORDING_OPTION_ANDROID_AUDIO_ENCODER_AAC,
+    sampleRate: 44100,
+    numberOfChannels: 1,
+    bitRate: 128000,
+  },
+  ios: {
+    extension: '.m4a',
+    audioQuality: Audio.RECORDING_OPTION_IOS_AUDIO_QUALITY_MEDIUM,
+    sampleRate: 44100,
+    numberOfChannels: 1,
+    bitRate: 128000,
+    linearPCMBitDepth: 16,
+    linearPCMIsBigEndian: false,
+    linearPCMIsFloat: false,
+  },
+  web: {},
+};
 
 const COLORS = {
   bg: '#0f172a',
@@ -33,25 +54,33 @@ export default function App() {
   const [status, setStatus] = useState('Tap to start detecting music');
   const [loading, setLoading] = useState(false);
 
-  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const intervalRef = useRef(null);
   const spinAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const isFirstRender = useRef(true);
 
-  // Spinning vinyl animation
+  // We keep a ref to the active recording so we can stop it on demand
+  const activeRecordingRef = useRef(null);
+  // Controls the recording loop
+  const shouldLoopRef = useRef(false);
+  // Prevents overlapping loops
+  const loopRunningRef = useRef(false);
+
+  // ── Spinning vinyl animation ──────────────────────────────────────────────
   useEffect(() => {
     if (isFirstRender.current) {
       isFirstRender.current = false;
       return;
     }
-
     if (isListening) {
-      Animated.loop(Animated.timing(spinAnim, { toValue: 1, duration: 4000, useNativeDriver: true })).start();
-      Animated.loop(Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.08, duration: 800, useNativeDriver: true }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
-      ])).start();
+      Animated.loop(
+        Animated.timing(spinAnim, { toValue: 1, duration: 4000, useNativeDriver: true })
+      ).start();
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 1.08, duration: 800, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
+        ])
+      ).start();
     } else {
       spinAnim.stopAnimation();
       pulseAnim.stopAnimation();
@@ -59,9 +88,7 @@ export default function App() {
     }
   }, [isListening]);
 
-  const spin = spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
-
-  // Fetch history
+  // ── Fetch history ─────────────────────────────────────────────────────────
   useEffect(() => {
     fetchHistory();
     const t = setInterval(fetchHistory, 10000);
@@ -76,75 +103,148 @@ export default function App() {
     } catch (_) {}
   };
 
-  const requestPermissions = async () => {
-    const status = await AudioModule.requestRecordingPermissionsAsync();
-    return status.granted;
-  };
+  // ── Core recording function: creates a FRESH recorder each time ───────────
+  const recordOnce = useCallback(async () => {
+    let recording = null;
+    let uri = null;
 
+    try {
+      // Set audio mode
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: true,
+        shouldDuckAndroid: false,
+        playThroughEarpieceAndroid: false,
+      });
+
+      // Create a brand-new Recording instance
+      recording = new Audio.Recording();
+      activeRecordingRef.current = recording;
+
+      await recording.prepareToRecordAsync(RECORDING_OPTIONS);
+      await recording.startAsync();
+
+      // Record for 9 seconds (checking every 200ms for stop signal)
+      for (let i = 0; i < 45; i++) {
+        if (!shouldLoopRef.current) break;
+        await new Promise(r => setTimeout(r, 200));
+      }
+
+      // Stop and get URI
+      await recording.stopAndUnloadAsync();
+      uri = recording.getURI();
+    } catch (err) {
+      console.error('[recordOnce] Recording error:', err.message || err);
+      // Attempt cleanup
+      if (recording) {
+        try { await recording.stopAndUnloadAsync(); } catch (_) {}
+      }
+      return null;
+    } finally {
+      activeRecordingRef.current = null;
+      recording = null;
+    }
+
+    return uri;
+  }, []);
+
+  // ── The recording loop ────────────────────────────────────────────────────
+  const runRecordingLoop = useCallback(async () => {
+    if (loopRunningRef.current) return;
+    loopRunningRef.current = true;
+
+    console.log('[Loop] Starting recording loop');
+
+    while (shouldLoopRef.current) {
+      const uri = await recordOnce();
+
+      if (!shouldLoopRef.current) break;
+
+      if (uri) {
+        try {
+          const fileInfo = await FileSystem.getInfoAsync(uri);
+          if (fileInfo.exists && fileInfo.size > 0) {
+            console.log(`[Loop] Got recording: ${uri} (${fileInfo.size} bytes)`);
+            await sendToBackend(uri);
+            // Cleanup file
+            try { await FileSystem.deleteAsync(uri, { idempotent: true }); } catch (_) {}
+          } else {
+            console.warn('[Loop] Empty or missing recording file');
+          }
+        } catch (e) {
+          console.error('[Loop] File processing error:', e.message || e);
+        }
+      } else {
+        console.warn('[Loop] recordOnce returned null, waiting before retry...');
+        // Wait 2s before retrying on error
+        for (let i = 0; i < 10; i++) {
+          if (!shouldLoopRef.current) break;
+          await new Promise(r => setTimeout(r, 200));
+        }
+      }
+
+      // Short pause between recordings
+      if (shouldLoopRef.current) {
+        await new Promise(r => setTimeout(r, 500));
+      }
+    }
+
+    loopRunningRef.current = false;
+    console.log('[Loop] Recording loop ended');
+  }, [recordOnce]);
+
+  // ── Start listening ───────────────────────────────────────────────────────
   const startListening = async () => {
-    const granted = await requestPermissions();
-    if (!granted) {
+    // Request permissions
+    const { status: permStatus } = await Audio.requestPermissionsAsync();
+    if (permStatus !== 'granted') {
       setStatus('Microphone permission denied.');
       return;
     }
 
-    await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+    shouldLoopRef.current = true;
     setIsListening(true);
     setStatus('Listening for music...');
-
-    // Start first capture immediately
-    captureAndSend();
-    // Record + send every 10 seconds
-    intervalRef.current = setInterval(() => captureAndSend(), 10000);
+    runRecordingLoop();
   };
 
-  const captureAndSend = async () => {
-    if (audioRecorder.isRecording) return; // skip if already recording
-    try {
-      await audioRecorder.prepareToRecordAsync();
-      audioRecorder.record();
+  // ── Stop listening ────────────────────────────────────────────────────────
+  const stopListening = async () => {
+    shouldLoopRef.current = false;
+    setIsListening(false);
+    setStatus('Stopped. Tap to detect again.');
 
-      setTimeout(async () => {
-        try {
-          if (!audioRecorder.isRecording) return;
-          await audioRecorder.stop();
-          const uri = audioRecorder.uri;
-          if (uri) {
-            await sendToBackend(uri);
-            try {
-              await FileSystem.deleteAsync(uri, { idempotent: true });
-            } catch (_) {}
-          }
-        } catch (e) {
-          console.error("Error stopping recording:", e);
-        }
-      }, 9000); // 9s recording per 10s cycle
-    } catch (e) {
-      console.error("Error starting recording:", e);
+    // Stop any active recording immediately
+    const rec = activeRecordingRef.current;
+    if (rec) {
+      try { await rec.stopAndUnloadAsync(); } catch (_) {}
+      activeRecordingRef.current = null;
     }
   };
 
+  // ── Send audio to backend ─────────────────────────────────────────────────
   const sendToBackend = async (uri) => {
     setLoading(true);
     try {
       const info = await FileSystem.getInfoAsync(uri);
       const sizeKB = info.exists ? (info.size / 1024).toFixed(1) : '0';
       setStatus(`Identifying... (${sizeKB} KB)`);
+      console.log(`[Upload] Sending ${sizeKB} KB to backend: ${uri}`);
 
-      // Fetch the file locally as a Blob to bypass native React Native FormData bugs
-      const fileResponse = await fetch(uri);
-      const audioBlob = await fileResponse.blob();
+      const uploadResult = await FileSystem.uploadAsync(
+        `${BACKEND_URL}/recognize`,
+        uri,
+        {
+          fieldName: 'audio',
+          httpMethod: 'POST',
+          uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+        }
+      );
 
-      const formData = new FormData();
-      const filename = uri.split('/').pop() || 'recording.m4a';
-      
-      formData.append('audio', audioBlob, filename);
-
-      const res = await fetch(`${BACKEND_URL}/recognize`, {
-        method: 'POST',
-        body: formData,
-      });
-      const data = await res.json();
+      console.log('[Upload] Response status:', uploadResult.status);
+      const data = JSON.parse(uploadResult.body);
+      console.log('[Upload] Response:', JSON.stringify(data).substring(0, 200));
 
       if (data.status === 'success') {
         if (data.song) {
@@ -158,23 +258,14 @@ export default function App() {
         setStatus(`Backend Error: ${data.message || 'Unknown error'}`);
       }
     } catch (e) {
-      setStatus(`Error: ${e.message || 'Network request failed'}`);
+      console.error('[Upload] Error:', e.message || e);
+      setStatus(`Upload Error: ${e.message || 'Network request failed'}`);
     } finally {
       setLoading(false);
     }
   };
 
-  const stopListening = async () => {
-    setIsListening(false);
-    setStatus('Stopped. Tap to detect again.');
-    clearInterval(intervalRef.current);
-    if (audioRecorder.isRecording) {
-      try {
-        await audioRecorder.stop();
-      } catch (_) {}
-    }
-  };
-
+  // ── Helpers ───────────────────────────────────────────────────────────────
   const openYouTube = (title, artist) =>
     Linking.openURL(`https://www.youtube.com/results?search_query=${encodeURIComponent(`${title} ${artist}`)}`);
 
@@ -188,11 +279,12 @@ export default function App() {
       const hours = String(date.getHours()).padStart(2, '0');
       const minutes = String(date.getMinutes()).padStart(2, '0');
       return `${hours}:${minutes}`;
-    } catch (_) {
-      return '';
-    }
+    } catch (_) { return ''; }
   };
 
+  const spin = spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" backgroundColor={COLORS.bg} />
@@ -255,6 +347,13 @@ export default function App() {
           </TouchableOpacity>
         </View>
 
+        {/* Status Text when Listening */}
+        {isListening && (
+          <View style={styles.statusCard}>
+            <Text style={styles.statusText}>{status}</Text>
+          </View>
+        )}
+
         {/* History */}
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>🕐 Detection History</Text>
@@ -302,6 +401,9 @@ const styles = StyleSheet.create({
   scroll: { padding: 16, paddingBottom: 40 },
 
   card: { backgroundColor: COLORS.bgCard, borderRadius: 24, borderWidth: 1, borderColor: COLORS.border, padding: 20, marginBottom: 16, alignItems: 'center' },
+
+  statusCard: { backgroundColor: 'rgba(59,130,246,0.1)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(59,130,246,0.3)', padding: 12, marginBottom: 16, alignItems: 'center' },
+  statusText: { color: COLORS.accent, fontSize: 14, fontWeight: '600', textAlign: 'center' },
 
   vinyl: { width: 160, height: 160, borderRadius: 80, backgroundColor: '#1e293b', borderWidth: 3, borderColor: '#334155', alignItems: 'center', justifyContent: 'center', marginBottom: 20, shadowColor: COLORS.accent, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.5, shadowRadius: 20, elevation: 10 },
   vinylCenter: { width: 56, height: 56, borderRadius: 28, backgroundColor: '#0f172a', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: COLORS.accent },
